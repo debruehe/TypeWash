@@ -1,0 +1,554 @@
+import SwiftUI
+import SwiftData
+import AppKit
+
+/// Main editor tab.
+/// Left side: Input | Output (resizable split, side by side).
+/// Right side (260 pt): Finder-style vibrancy sidebar with preset cards.
+struct EditorView: View {
+
+    @Query(sort: \Preset.createdAt) private var presets: [Preset]
+    @Environment(\.modelContext) private var modelContext
+
+    @State private var inputText = ""
+    @State private var outputText = ""
+    @State private var selectedPreset: Preset?
+    @State private var editingPreset: Preset?
+
+    // Stats from the last transform
+    @State private var lastOperationsApplied = 0
+    @State private var lastTotalChanges = 0
+
+    // Clipboard auto-read
+    @State private var clipboardChangeCount = NSPasteboard.general.changeCount
+    @State private var pollingTimer: Timer?
+
+    // Delete confirmation
+    @State private var deleteCandidate: Preset?
+    @State private var showDeleteAlert = false
+
+    // Auto-copy mode — persisted across launches
+    @AppStorage("autoMode") private var autoMode = false
+
+    // Resizable split pane
+    @State private var inputWidthFraction: CGFloat = 0.5
+    @State private var dragStartFraction: CGFloat = 0.5
+
+    var body: some View {
+        HStack(spacing: 0) {
+            leftContent
+            presetSidebar
+                .frame(width: 260)
+        }
+        .onAppear { startClipboardPolling() }
+        .onDisappear { stopClipboardPolling() }
+        .onChange(of: selectedPreset) {
+            if !inputText.isEmpty { applyPreset() }
+        }
+        .alert("Delete Preset", isPresented: $showDeleteAlert, presenting: deleteCandidate) { preset in
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) { deletePreset(preset) }
+        } message: { preset in
+            Text("Are you sure you want to delete \u{201C}\(preset.name)\u{201D}? This cannot be undone.")
+        }
+    }
+
+    // MARK: - Left Content
+
+    @ViewBuilder
+    private var leftContent: some View {
+        if let preset = editingPreset {
+            VStack(spacing: 0) {
+                // Back bar
+                HStack {
+                    HoverButton(
+                        label: Label("Back", systemImage: "chevron.left"),
+                        action: { editingPreset = nil }
+                    )
+
+                    Spacer()
+
+                    Text(preset.name)
+                        .font(.headline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+
+                    Spacer()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.bar)
+
+                Divider()
+
+                PresetEditorView(preset: preset)
+            }
+        } else {
+            textAreasView
+        }
+    }
+
+    // MARK: - Text Areas (resizable side-by-side)
+
+    private var textAreasView: some View {
+        VStack(spacing: 0) {
+            // Auto-copy mode bar
+            HStack {
+                Toggle(isOn: $autoMode) {
+                    Label("Auto-copy", systemImage: "bolt.fill")
+                        .foregroundStyle(autoMode ? .primary : .secondary)
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .help("Automatically copy output to clipboard whenever input changes")
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 7)
+            .background(.bar)
+
+            Divider()
+
+            GeometryReader { geo in
+                HStack(spacing: 0) {
+                    // Input pane
+                    inputPane
+                        .frame(width: max(140, geo.size.width * inputWidthFraction))
+
+                    // Draggable divider handle
+                    resizableDivider(totalWidth: geo.size.width)
+
+                    // Output pane
+                    outputPane
+                }
+            }
+
+            Divider()
+
+            // Status bar
+            HStack {
+                Text("\(outputText.count) characters")
+                    .foregroundStyle(.tertiary)
+
+                Spacer()
+
+                if lastOperationsApplied > 0 {
+                    Text("\(lastOperationsApplied) operations, \(lastTotalChanges) changes")
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .font(.caption)
+            .padding(.horizontal)
+            .padding(.vertical, 6)
+            .background(.bar)
+        }
+    }
+
+    private var inputPane: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Input", systemImage: "text.cursor")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+
+            HiddenCharacterTextView(text: $inputText, isEditable: true)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5)
+                )
+        }
+        .padding(.horizontal)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .frame(maxHeight: .infinity)
+    }
+
+    private var outputPane: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("Output", systemImage: "sparkles")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(outputText.isEmpty ? .secondary : .primary)
+
+                Spacer()
+
+                CopyButton(isFlashing: outputText.isEmpty ? false : false, action: copyResult)
+                    .disabled(outputText.isEmpty)
+            }
+
+            HiddenCharacterTextView(text: $outputText, isEditable: false)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(
+                            outputText.isEmpty
+                                ? Color(nsColor: .separatorColor)
+                                : Color.accentColor.opacity(0.35),
+                            lineWidth: outputText.isEmpty ? 0.5 : 1.0
+                        )
+                )
+        }
+        .padding(.horizontal)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity)
+        .frame(maxHeight: .infinity)
+    }
+
+    // MARK: - Resize Divider
+
+    private func resizableDivider(totalWidth: CGFloat) -> some View {
+        ZStack {
+            Color(nsColor: .separatorColor)
+                .frame(width: 1)
+
+            // Wider invisible hit area
+            Color.clear
+                .frame(width: 8)
+                .contentShape(Rectangle())
+                .onHover { hovering in
+                    if hovering { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 1)
+                        .onChanged { value in
+                            guard totalWidth > 0 else { return }
+                            let newFraction = dragStartFraction + value.translation.width / totalWidth
+                            inputWidthFraction = min(max(newFraction, 0.25), 0.75)
+                        }
+                        .onEnded { _ in
+                            dragStartFraction = inputWidthFraction
+                        }
+                )
+        }
+        .frame(width: 8)
+        .frame(maxHeight: .infinity)
+    }
+
+    // MARK: - Preset Sidebar
+
+    private var presetSidebar: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                // Left border line
+                Color(nsColor: .separatorColor)
+                    .frame(width: 1)
+
+                VStack(spacing: 0) {
+                    // Header
+                    HStack {
+                        Text("Presets")
+                            .font(.subheadline.weight(.semibold))
+
+                        Spacer()
+
+                        SidebarIconButton(
+                            icon: "plus",
+                            help: "New preset",
+                            action: createNewPreset
+                        )
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+                    .padding(.bottom, 10)
+
+                    Divider()
+
+                    if presets.isEmpty {
+                        Spacer()
+                        Text("No presets yet")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                        Spacer()
+                    } else {
+                        ScrollView {
+                            VStack(spacing: 0) {
+                                ForEach(Array(presets.enumerated()), id: \.element.id) { index, preset in
+                                    PresetCardView(
+                                        preset: preset,
+                                        isSelected: selectedPreset?.id == preset.id,
+                                        onTap: { selectedPreset = preset },
+                                        onEdit: { editingPreset = preset },
+                                        onDuplicate: { duplicatePreset(preset) },
+                                        onDelete: {
+                                            deleteCandidate = preset
+                                            showDeleteAlert = true
+                                        }
+                                    )
+
+                                    if index < presets.count - 1 {
+                                        Divider()
+                                            .padding(.horizontal, 12)
+                                    }
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                }
+            }
+        }
+        .background(VisualEffectBlurView(material: .sidebar))
+    }
+
+    // MARK: - Clipboard Polling
+
+    private func startClipboardPolling() {
+        clipboardChangeCount = NSPasteboard.general.changeCount
+
+        let t = Timer(timeInterval: 0.5, repeats: true) { _ in
+            let newCount = NSPasteboard.general.changeCount
+            guard newCount != clipboardChangeCount else { return }
+            clipboardChangeCount = newCount
+
+            if let text = ClipboardService.getText() {
+                inputText = text
+                if selectedPreset != nil {
+                    applyPreset()
+                }
+            }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        pollingTimer = t
+    }
+
+    private func stopClipboardPolling() {
+        pollingTimer?.invalidate()
+        pollingTimer = nil
+    }
+
+    // MARK: - Actions
+
+    private func applyPreset() {
+        guard let preset = selectedPreset, !inputText.isEmpty else { return }
+
+        let result = PresetEngine.apply(preset: preset, to: inputText)
+        outputText = result.outputText
+        lastOperationsApplied = result.operationsApplied
+        lastTotalChanges = result.totalChanges
+
+        let entry = HistoryEntry(
+            inputText: inputText,
+            outputText: result.outputText,
+            presetName: preset.name,
+            presetId: preset.id
+        )
+        modelContext.insert(entry)
+
+        // Auto-copy: write output back to clipboard immediately.
+        // copyResult() updates clipboardChangeCount right after writing,
+        // so the next poll sees an unchanged count and won't re-insert. No loop.
+        if autoMode {
+            copyResult()
+        }
+    }
+
+    private func copyResult() {
+        ClipboardService.copy(outputText)
+        clipboardChangeCount = NSPasteboard.general.changeCount
+    }
+
+    private func createNewPreset() {
+        let preset = Preset(name: "New Preset")
+        modelContext.insert(preset)
+        try? modelContext.save()
+        selectedPreset = preset
+        editingPreset = preset
+    }
+
+    private func duplicatePreset(_ preset: Preset) {
+        let copy = Preset(name: "\(preset.name) Copy", description: preset.presetDescription ?? "")
+        modelContext.insert(copy)
+        for op in preset.sortedOperations {
+            let opCopy = PresetOperation(
+                find: op.findPattern,
+                replace: op.replacePattern,
+                isRegex: op.isRegex,
+                caseSensitive: op.isCaseSensitive,
+                sortOrder: op.sortOrder
+            )
+            opCopy.preset = copy
+            copy.operations.append(opCopy)
+            modelContext.insert(opCopy)
+        }
+    }
+
+    private func deletePreset(_ preset: Preset) {
+        if selectedPreset?.id == preset.id { selectedPreset = nil }
+        if editingPreset?.id == preset.id { editingPreset = nil }
+        modelContext.delete(preset)
+    }
+}
+
+// MARK: - Preset Card
+
+private struct PresetCardView: View {
+    let preset: Preset
+    let isSelected: Bool
+    let onTap: () -> Void
+    let onEdit: () -> Void
+    let onDuplicate: () -> Void
+    let onDelete: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Name + checkmark
+            HStack(alignment: .top, spacing: 6) {
+                Text(preset.name)
+                    .font(.callout.weight(isSelected ? .semibold : .medium))
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.top, 1)
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+
+            // Description
+            if let desc = preset.presetDescription, !desc.isEmpty {
+                Text(desc)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // Action buttons row
+            HStack(spacing: 5) {
+                Spacer()
+
+                SidebarIconButton(
+                    icon: "pencil",
+                    help: "Edit \u{201C}\(preset.name)\u{201D}",
+                    action: onEdit
+                )
+                SidebarIconButton(
+                    icon: "doc.on.doc",
+                    help: "Duplicate \u{201C}\(preset.name)\u{201D}",
+                    action: onDuplicate
+                )
+                SidebarIconButton(
+                    icon: "trash",
+                    color: .red,
+                    help: "Delete \u{201C}\(preset.name)\u{201D}",
+                    action: onDelete
+                )
+            }
+        }
+        // Inner padding: breathing room between content and highlight border
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        // Highlight wraps content directly — no inverted inset tricks
+        .background(
+            RoundedRectangle(cornerRadius: 9)
+                .fill(
+                    isSelected
+                        ? Color.accentColor.opacity(0.13)
+                        : isHovered
+                            ? Color(nsColor: .labelColor).opacity(0.05)
+                            : Color.clear
+                )
+        )
+        // Outer padding: breathing room between highlight border and dividers/walls
+        .padding(.horizontal, 8)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
+        .onHover { isHovered = $0 }
+        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .animation(.easeInOut(duration: 0.15), value: isSelected)
+    }
+}
+
+// MARK: - Shared Icon Button (sidebar actions + header "+")
+
+/// Accent-colored icon button with subtle rounded-rect background and hover lift.
+private struct SidebarIconButton: View {
+    let icon: String
+    var color: Color = .accentColor
+    let help: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white)
+                .frame(width: 26, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(color.opacity(isHovered ? 1.0 : 0.82))
+                )
+                .scaleEffect(isHovered ? 1.06 : 1.0)
+                .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isHovered)
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Copy Button
+
+private struct CopyButton: View {
+    let isFlashing: Bool
+    let action: () -> Void
+
+    @State private var isCopied = false
+    @State private var isHovered = false
+
+    var body: some View {
+        Button {
+            action()
+            withAnimation(.easeInOut(duration: 0.18)) { isCopied = true }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                withAnimation(.easeInOut(duration: 0.18)) { isCopied = false }
+            }
+        } label: {
+            Label(
+                isCopied ? "Copied" : "Copy",
+                systemImage: isCopied ? "checkmark" : "doc.on.doc"
+            )
+            .font(.subheadline)
+            .foregroundStyle(isCopied ? Color.green : (isHovered ? Color.primary : Color.secondary))
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isHovered ? 1.04 : 1.0)
+        .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isHovered)
+        .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Back / plain hover button
+
+private struct HoverButton<Label: View>: View {
+    let label: Label
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            label
+                .foregroundStyle(isHovered ? Color.primary : Color.secondary)
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isHovered ? 1.04 : 1.0)
+        .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isHovered)
+        .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Preview
+
+#Preview {
+    EditorView()
+        .modelContainer(for: [Preset.self, HistoryEntry.self], inMemory: true)
+        .frame(width: 960, height: 680)
+}
