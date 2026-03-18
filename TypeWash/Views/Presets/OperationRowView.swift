@@ -49,12 +49,15 @@ struct OperationRowView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            TextField("Pattern", text: $operation.findPattern)
-                .font(.system(.body, design: .monospaced))
-                .textFieldStyle(.roundedBorder)
+            PatternTextField(placeholder: "Pattern", text: $operation.findPattern)
+                .frame(minHeight: 28)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 3)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(regexError != nil ? Color.red : Color.clear, lineWidth: 1.5)
+                        .stroke(regexError != nil ? Color.red : Color(nsColor: .separatorColor), lineWidth: regexError != nil ? 1.5 : 0.5)
                 )
         }
     }
@@ -65,9 +68,16 @@ struct OperationRowView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-            TextField("Replacement", text: $operation.replacePattern)
-                .font(.system(.body, design: .monospaced))
-                .textFieldStyle(.roundedBorder)
+            PatternTextField(placeholder: "Replacement", text: $operation.replacePattern)
+                .frame(minHeight: 28)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 3)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+                )
         }
     }
 
