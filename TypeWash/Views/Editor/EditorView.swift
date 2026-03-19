@@ -241,6 +241,11 @@ struct EditorView: View {
                         Spacer()
 
                         SidebarIconButton(
+                            icon: "square.and.arrow.down",
+                            help: "Import preset from JSON",
+                            action: importPreset
+                        )
+                        SidebarIconButton(
                             icon: "plus",
                             help: "New preset",
                             action: createNewPreset
@@ -268,6 +273,7 @@ struct EditorView: View {
                                         onTap: { selectedPreset = preset },
                                         onEdit: { editingPreset = preset },
                                         onDuplicate: { duplicatePreset(preset) },
+                                        onExport: { PresetImportExport.exportPreset(preset) },
                                         onDelete: {
                                             deleteCandidate = preset
                                             showDeleteAlert = true
@@ -346,6 +352,13 @@ struct EditorView: View {
         clipboardChangeCount = NSPasteboard.general.changeCount
     }
 
+    private func importPreset() {
+        guard let doc = PresetImportExport.pickImportFile() else { return }
+        let preset = PresetImportExport.importAsNew(doc, into: modelContext)
+        selectedPreset = preset
+        editingPreset = preset
+    }
+
     private func createNewPreset() {
         let preset = Preset(name: "New Preset")
         modelContext.insert(preset)
@@ -386,6 +399,7 @@ private struct PresetCardView: View {
     let onTap: () -> Void
     let onEdit: () -> Void
     let onDuplicate: () -> Void
+    let onExport: () -> Void
     let onDelete: () -> Void
 
     @State private var isHovered = false
@@ -430,6 +444,11 @@ private struct PresetCardView: View {
                     icon: "doc.on.doc",
                     help: "Duplicate \u{201C}\(preset.name)\u{201D}",
                     action: onDuplicate
+                )
+                SidebarIconButton(
+                    icon: "square.and.arrow.up",
+                    help: "Export \u{201C}\(preset.name)\u{201D}",
+                    action: onExport
                 )
                 SidebarIconButton(
                     icon: "trash",
