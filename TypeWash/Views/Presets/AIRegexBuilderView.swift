@@ -132,7 +132,7 @@ struct AIRegexBuilderView: View {
                 .keyboardShortcut(.return, modifiers: .command)
 
                 if suggestion != nil {
-                    Button("Insert Pattern") {
+                    Button("Add to Preset") {
                         if let s = suggestion {
                             onInsert(s.findPattern, s.replacePattern)
                         }

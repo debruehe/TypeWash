@@ -5,6 +5,7 @@ struct OperationRowView: View {
 
     @Bindable var operation: PresetOperation
     var onDelete: () -> Void
+    var onAddAIOperation: (String, String) -> Void
 
     @State private var showAIAssistSheet = false
     @State private var showRegexRefPopover = false
@@ -132,9 +133,7 @@ struct OperationRowView: View {
         .help("AI Assist — generate regex from natural language")
         .sheet(isPresented: $showAIAssistSheet) {
             AIRegexBuilderView { find, replace in
-                operation.findPattern = find
-                operation.replacePattern = replace
-                operation.isRegex = true
+                onAddAIOperation(find, replace)
             }
         }
     }

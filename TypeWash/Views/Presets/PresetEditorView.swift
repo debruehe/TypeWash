@@ -98,9 +98,11 @@ struct PresetEditorView: View {
     private var operationsList: some View {
         List {
             ForEach(preset.sortedOperations) { operation in
-                OperationRowView(operation: operation) {
+                OperationRowView(operation: operation, onDelete: {
                     deleteOperation(operation)
-                }
+                }, onAddAIOperation: { find, replace in
+                    addAIOperation(find: find, replace: replace)
+                })
             }
             .onMove(perform: moveOperations)
 
@@ -121,6 +123,15 @@ struct PresetEditorView: View {
     }
 
     // MARK: - Actions
+
+    private func addAIOperation(find: String, replace: String) {
+        let nextOrder = (preset.operations.map(\.sortOrder).max() ?? -1) + 1
+        let operation = PresetOperation(find: find, replace: replace, isRegex: true, sortOrder: nextOrder)
+        operation.preset = preset
+        modelContext.insert(operation)
+        preset.operations.append(operation)
+        preset.updatedAt = Date()
+    }
 
     private func addOperation() {
         let nextOrder = (preset.operations.map(\.sortOrder).max() ?? -1) + 1
