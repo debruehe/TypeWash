@@ -99,7 +99,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Restore Default Presets")
                             .font(.body)
-                        Text("Re-adds any missing built-in presets without affecting your custom presets.")
+                        Text("Re-adds missing built-in presets and updates existing ones to the latest version.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }

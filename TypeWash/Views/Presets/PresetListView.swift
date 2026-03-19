@@ -12,6 +12,7 @@ struct PresetListView: View {
     @State private var presetToDelete: Preset?
     @State private var renamingPreset: Preset?
     @State private var renameText = ""
+    @State private var importError: String?
 
     private var selectedPreset: Preset? {
         presets.first { $0.id == selectedPresetID }
@@ -56,6 +57,14 @@ struct PresetListView: View {
                     Image(systemName: "plus")
                 }
                 .help("New Preset")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    importPreset()
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .help("Import Preset from JSON")
             }
         }
     }
@@ -116,6 +125,12 @@ struct PresetListView: View {
             duplicatePreset(preset)
         } label: {
             Label("Duplicate", systemImage: "doc.on.doc")
+        }
+
+        Button {
+            PresetImportExport.exportPreset(preset)
+        } label: {
+            Label("Export…", systemImage: "square.and.arrow.up")
         }
 
         Divider()
@@ -231,6 +246,12 @@ struct PresetListView: View {
         }
 
         selectedPresetID = copy.id
+    }
+
+    private func importPreset() {
+        guard let doc = PresetImportExport.pickImportFile() else { return }
+        let preset = PresetImportExport.importAsNew(doc, into: modelContext)
+        selectedPresetID = preset.id
     }
 
     private func commitRename(_ preset: Preset) {

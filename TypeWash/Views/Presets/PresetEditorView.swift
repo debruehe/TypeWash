@@ -5,6 +5,8 @@ struct PresetEditorView: View {
 
     @Bindable var preset: Preset
     @Environment(\.modelContext) private var modelContext
+    @State private var showMergeConfirm = false
+    @State private var pendingMergeDoc: PresetDocument?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -45,6 +47,42 @@ struct PresetEditorView: View {
                 Text("\(preset.operations.count) operation\(preset.operations.count == 1 ? "" : "s")")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+
+                Button {
+                    if let doc = PresetImportExport.pickImportFile() {
+                        pendingMergeDoc = doc
+                        showMergeConfirm = true
+                    }
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Import & Merge — append operations from a JSON preset file")
+                .confirmationDialog(
+                    "Merge \"\(pendingMergeDoc?.name ?? "")\" into \"\(preset.name)\"?",
+                    isPresented: $showMergeConfirm,
+                    titleVisibility: .visible
+                ) {
+                    Button("Merge") {
+                        if let doc = pendingMergeDoc {
+                            PresetImportExport.mergeInto(preset, from: doc, context: modelContext)
+                        }
+                        pendingMergeDoc = nil
+                    }
+                    Button("Cancel", role: .cancel) { pendingMergeDoc = nil }
+                } message: {
+                    Text("This will append \(pendingMergeDoc?.operations.count ?? 0) operation(s) to the end of this preset.")
+                }
+
+                Button {
+                    PresetImportExport.exportPreset(preset)
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Export preset as JSON")
             }
 
             TextField("Description (optional)", text: descriptionBinding)
