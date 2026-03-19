@@ -52,7 +52,7 @@ enum PresetImportExport {
 
     @discardableResult
     static func importAsNew(_ doc: PresetDocument, into context: ModelContext) -> Preset {
-        let preset = Preset(name: doc.name, description: doc.description)
+        let preset = Preset(name: doc.name, description: doc.description ?? "")
         context.insert(preset)
         for (index, op) in doc.operations.enumerated() {
             let operation = PresetOperation(
