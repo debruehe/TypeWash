@@ -49,7 +49,14 @@ struct PresetListView: View {
         }
         .listStyle(.sidebar)
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    importPreset()
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
+                }
+                .help("Import Preset from JSON")
+
                 Button {
                     newPresetName = ""
                     showNewPresetSheet = true
@@ -57,14 +64,6 @@ struct PresetListView: View {
                     Image(systemName: "plus")
                 }
                 .help("New Preset")
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    importPreset()
-                } label: {
-                    Image(systemName: "square.and.arrow.down")
-                }
-                .help("Import Preset from JSON")
             }
         }
     }
