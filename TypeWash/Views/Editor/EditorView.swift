@@ -30,6 +30,16 @@ struct EditorView: View {
     // Auto-copy mode — persisted across launches
     @AppStorage("autoMode") private var autoMode = false
 
+    // Hyphenation mode settings — persisted across launches
+    @AppStorage("hyphenationEnabled")     private var hyphenationEnabled     = false
+    @AppStorage("hyphen.language")        private var hyphenationLanguage     = HyphenationEngine.Language.german.rawValue
+    @AppStorage("hyphen.minWordLength")   private var hyphenationMinWordLength  = 5
+    @AppStorage("hyphen.minCharsBefore")  private var hyphenationMinCharsBefore = 2
+    @AppStorage("hyphen.minCharsAfter")   private var hyphenationMinCharsAfter  = 2
+
+    // Hyphenation result count for status bar
+    @State private var lastHyphenationsAdded = 0
+
     // Resizable split pane
     @State private var inputWidthFraction: CGFloat = 0.5
     @State private var dragStartFraction: CGFloat = 0.5
@@ -43,7 +53,22 @@ struct EditorView: View {
         .onAppear { startClipboardPolling() }
         .onDisappear { stopClipboardPolling() }
         .onChange(of: selectedPreset) {
-            if !inputText.isEmpty { applyPreset() }
+            if !inputText.isEmpty { applyAll() }
+        }
+        .onChange(of: hyphenationEnabled) {
+            if !inputText.isEmpty { applyAll() }
+        }
+        .onChange(of: hyphenationLanguage) {
+            if hyphenationEnabled && !inputText.isEmpty { applyAll() }
+        }
+        .onChange(of: hyphenationMinWordLength) {
+            if hyphenationEnabled && !inputText.isEmpty { applyAll() }
+        }
+        .onChange(of: hyphenationMinCharsBefore) {
+            if hyphenationEnabled && !inputText.isEmpty { applyAll() }
+        }
+        .onChange(of: hyphenationMinCharsAfter) {
+            if hyphenationEnabled && !inputText.isEmpty { applyAll() }
         }
         .alert("Delete Preset", isPresented: $showDeleteAlert, presenting: deleteCandidate) { preset in
             Button("Cancel", role: .cancel) {}
@@ -132,8 +157,8 @@ struct EditorView: View {
 
                 Spacer()
 
-                if lastOperationsApplied > 0 {
-                    Text("\(lastOperationsApplied) operations, \(lastTotalChanges) changes")
+                if !statusBarDetail.isEmpty {
+                    Text(statusBarDetail)
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -289,6 +314,17 @@ struct EditorView: View {
                             .padding(.vertical, 4)
                         }
                     }
+
+                    Divider()
+
+                    // Hyphenation mode section
+                    HyphenationModeView(
+                        isEnabled:      $hyphenationEnabled,
+                        language:       $hyphenationLanguage,
+                        minWordLength:  $hyphenationMinWordLength,
+                        minCharsBefore: $hyphenationMinCharsBefore,
+                        minCharsAfter:  $hyphenationMinCharsAfter
+                    )
                 }
             }
         }
@@ -307,8 +343,8 @@ struct EditorView: View {
 
             if let text = ClipboardService.getText() {
                 inputText = text
-                if selectedPreset != nil {
-                    applyPreset()
+                if selectedPreset != nil || hyphenationEnabled {
+                    applyAll()
                 }
             }
         }
@@ -323,19 +359,43 @@ struct EditorView: View {
 
     // MARK: - Actions
 
-    private func applyPreset() {
-        guard let preset = selectedPreset, !inputText.isEmpty else { return }
+    /// Runs the full transformation pipeline: preset operations (if selected)
+    /// followed by hyphenation (if enabled). Either or both may be active.
+    private func applyAll() {
+        guard !inputText.isEmpty, selectedPreset != nil || hyphenationEnabled else { return }
 
-        let result = PresetEngine.apply(preset: preset, to: inputText)
-        outputText = result.outputText
-        lastOperationsApplied = result.operationsApplied
-        lastTotalChanges = result.totalChanges
+        var text          = inputText
+        var opsApplied    = 0
+        var totalChanges  = 0
+        var hyphensAdded  = 0
 
+        // Step 1 — apply selected preset
+        if let preset = selectedPreset {
+            let result   = PresetEngine.apply(preset: preset, to: text)
+            text         = result.outputText
+            opsApplied   = result.operationsApplied
+            totalChanges = result.totalChanges
+        }
+
+        // Step 2 — apply hyphenation
+        if hyphenationEnabled {
+            let hyphenResult = HyphenationEngine.apply(to: text, settings: currentHyphenationSettings)
+            text        = hyphenResult.output
+            hyphensAdded = hyphenResult.count
+        }
+
+        outputText              = text
+        lastOperationsApplied   = opsApplied
+        lastTotalChanges        = totalChanges
+        lastHyphenationsAdded   = hyphensAdded
+
+        let presetName = selectedPreset?.name
+            ?? (hyphenationEnabled ? "Hyphenation" : "")
         let entry = HistoryEntry(
-            inputText: inputText,
-            outputText: result.outputText,
-            presetName: preset.name,
-            presetId: preset.id
+            inputText:  inputText,
+            outputText: text,
+            presetName: presetName,
+            presetId:   selectedPreset?.id
         )
         modelContext.insert(entry)
 
@@ -345,6 +405,26 @@ struct EditorView: View {
         if autoMode {
             copyResult()
         }
+    }
+
+    private var currentHyphenationSettings: HyphenationEngine.Settings {
+        HyphenationEngine.Settings(
+            language:           HyphenationEngine.Language(rawValue: hyphenationLanguage) ?? .german,
+            minWordLength:      max(3, hyphenationMinWordLength),
+            minCharsBeforeBreak: max(1, hyphenationMinCharsBefore),
+            minCharsAfterBreak:  max(1, hyphenationMinCharsAfter)
+        )
+    }
+
+    private var statusBarDetail: String {
+        var parts: [String] = []
+        if lastOperationsApplied > 0 {
+            parts.append("\(lastOperationsApplied) operations, \(lastTotalChanges) changes")
+        }
+        if lastHyphenationsAdded > 0 {
+            parts.append("\(lastHyphenationsAdded) soft hyphens")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func copyResult() {
