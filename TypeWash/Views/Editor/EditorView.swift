@@ -30,6 +30,9 @@ struct EditorView: View {
     // Auto-copy mode — persisted across launches
     @AppStorage("autoMode") private var autoMode = false
 
+    // Clipboard watch — persisted across launches
+    @AppStorage("clipboardWatchEnabled") private var clipboardWatchEnabled = true
+
     // Hyphenation mode settings — persisted across launches
     @AppStorage("hyphenationEnabled")     private var hyphenationEnabled     = false
     @AppStorage("hyphen.language")        private var hyphenationLanguage     = HyphenationEngine.Language.german.rawValue
@@ -69,6 +72,13 @@ struct EditorView: View {
         }
         .onChange(of: hyphenationMinCharsAfter) {
             if hyphenationEnabled && !inputText.isEmpty { applyAll() }
+        }
+        .onChange(of: clipboardWatchEnabled) {
+            if clipboardWatchEnabled {
+                startClipboardPolling()
+            } else {
+                stopClipboardPolling()
+            }
         }
         .alert("Delete Preset", isPresented: $showDeleteAlert, presenting: deleteCandidate) { preset in
             Button("Cancel", role: .cancel) {}
@@ -119,6 +129,18 @@ struct EditorView: View {
         VStack(spacing: 0) {
             // Auto-copy mode bar
             HStack {
+                Toggle(isOn: $clipboardWatchEnabled) {
+                    Label("Watch clipboard", systemImage: "doc.on.clipboard")
+                        .foregroundStyle(clipboardWatchEnabled ? .primary : .secondary)
+                }
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .help("Automatically read clipboard changes into the input field")
+
+                Divider()
+                    .frame(height: 16)
+                    .padding(.horizontal, 4)
+
                 Toggle(isOn: $autoMode) {
                     Label("Auto-copy", systemImage: "bolt.fill")
                         .foregroundStyle(autoMode ? .primary : .secondary)
@@ -295,7 +317,9 @@ struct EditorView: View {
                                     PresetCardView(
                                         preset: preset,
                                         isSelected: selectedPreset?.id == preset.id,
-                                        onTap: { selectedPreset = preset },
+                                        onTap: {
+                                            selectedPreset = (selectedPreset?.id == preset.id) ? nil : preset
+                                        },
                                         onEdit: { editingPreset = preset },
                                         onDuplicate: { duplicatePreset(preset) },
                                         onExport: { PresetImportExport.exportPreset(preset) },
@@ -334,6 +358,7 @@ struct EditorView: View {
     // MARK: - Clipboard Polling
 
     private func startClipboardPolling() {
+        guard clipboardWatchEnabled else { return }
         clipboardChangeCount = NSPasteboard.general.changeCount
 
         let t = Timer(timeInterval: 0.5, repeats: true) { _ in
@@ -348,7 +373,7 @@ struct EditorView: View {
                 }
             }
         }
-        RunLoop.main.add(t, forMode: .common)
+        RunLoop.main.add(t, forMode: .default)
         pollingTimer = t
     }
 
