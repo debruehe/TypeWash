@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import AppKit
+import UniformTypeIdentifiers
 
 /// Main editor tab.
 /// Left side: Input | Output (resizable split, side by side).
@@ -46,6 +47,34 @@ struct EditorView: View {
     // Resizable split pane
     @State private var inputWidthFraction: CGFloat = 0.5
     @State private var dragStartFraction: CGFloat = 0.5
+
+    // Preset drag-to-reorder — JSON-encoded [UUID] persisted across launches
+    @AppStorage("presetOrder") private var presetOrderData: Data = Data()
+    @State private var draggingPresetId: UUID? = nil
+    @State private var dropTargetPresetId: UUID? = nil
+
+    /// Presets in user-defined order, falling back to createdAt for new entries.
+    private var orderedPresets: [Preset] {
+        let ids = (try? JSONDecoder().decode([UUID].self, from: presetOrderData)) ?? []
+        guard !ids.isEmpty else { return presets }
+        let lookup = Dictionary(uniqueKeysWithValues: presets.map { ($0.id, $0) })
+        let ordered = ids.compactMap { lookup[$0] }
+        let remaining = presets.filter { p in !ids.contains(p.id) }
+        return ordered + remaining
+    }
+
+    private func saveOrder(_ ordered: [Preset]) {
+        presetOrderData = (try? JSONEncoder().encode(ordered.map(\.id))) ?? Data()
+    }
+
+    private func reorderPreset(from fromId: UUID, to toId: UUID) {
+        var ordered = orderedPresets
+        guard let from = ordered.firstIndex(where: { $0.id == fromId }),
+              let to   = ordered.firstIndex(where: { $0.id == toId }) else { return }
+        ordered.move(fromOffsets: IndexSet(integer: from),
+                     toOffset: to > from ? to + 1 : to)
+        saveOrder(ordered)
+    }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -313,10 +342,11 @@ struct EditorView: View {
                     } else {
                         ScrollView {
                             VStack(spacing: 0) {
-                                ForEach(Array(presets.enumerated()), id: \.element.id) { index, preset in
+                                ForEach(orderedPresets) { preset in
                                     PresetCardView(
                                         preset: preset,
                                         isSelected: selectedPreset?.id == preset.id,
+                                        isDropTarget: dropTargetPresetId == preset.id,
                                         onTap: {
                                             selectedPreset = (selectedPreset?.id == preset.id) ? nil : preset
                                         },
@@ -328,14 +358,32 @@ struct EditorView: View {
                                             showDeleteAlert = true
                                         }
                                     )
-
-                                    if index < presets.count - 1 {
-                                        Divider()
-                                            .padding(.horizontal, 12)
+                                    .onDrag {
+                                        draggingPresetId = preset.id
+                                        return NSItemProvider(object: preset.id.uuidString as NSString)
                                     }
+                                    .onDrop(of: [.text], isTargeted: Binding(
+                                        get: { dropTargetPresetId == preset.id },
+                                        set: { isOver in
+                                            if isOver { dropTargetPresetId = preset.id }
+                                            else if dropTargetPresetId == preset.id { dropTargetPresetId = nil }
+                                        }
+                                    )) { _ in
+                                        guard let fromId = draggingPresetId,
+                                              fromId != preset.id else { return false }
+                                        withAnimation(.easeInOut(duration: 0.2)) {
+                                            reorderPreset(from: fromId, to: preset.id)
+                                        }
+                                        draggingPresetId = nil
+                                        dropTargetPresetId = nil
+                                        return true
+                                    }
+
+                                    Divider()
+                                        .padding(.horizontal, 12)
                                 }
                             }
-                            .padding(.vertical, 4)
+                            .padding(.vertical, 2)
                         }
                     }
 
@@ -468,6 +516,10 @@ struct EditorView: View {
         let preset = Preset(name: "New Preset")
         modelContext.insert(preset)
         try? modelContext.save()
+        // Append directly to the stored ID list — don't use orderedPresets here because
+        // @Query may have already refreshed and the new preset would appear twice.
+        let currentIds = (try? JSONDecoder().decode([UUID].self, from: presetOrderData)) ?? []
+        presetOrderData = (try? JSONEncoder().encode(currentIds + [preset.id])) ?? Data()
         selectedPreset = preset
         editingPreset = preset
     }
@@ -492,6 +544,9 @@ struct EditorView: View {
     private func deletePreset(_ preset: Preset) {
         if selectedPreset?.id == preset.id { selectedPreset = nil }
         if editingPreset?.id == preset.id { editingPreset = nil }
+        // Remove from user-defined order before deleting
+        let ordered = orderedPresets.filter { $0.id != preset.id }
+        saveOrder(ordered)
         modelContext.delete(preset)
     }
 }
@@ -501,6 +556,7 @@ struct EditorView: View {
 private struct PresetCardView: View {
     let preset: Preset
     let isSelected: Bool
+    let isDropTarget: Bool
     let onTap: () -> Void
     let onEdit: () -> Void
     let onDuplicate: () -> Void
@@ -510,65 +566,34 @@ private struct PresetCardView: View {
     @State private var isHovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Name + checkmark
-            HStack(alignment: .top, spacing: 6) {
+        VStack(alignment: .leading, spacing: 2) {
+            // Line 1: name + selected checkmark
+            HStack(spacing: 4) {
                 Text(preset.name)
-                    .font(.callout.weight(isSelected ? .semibold : .medium))
-                    .lineLimit(2)
+                    .font(.callout.weight(isSelected ? .bold : .semibold))
+                    .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Color.accentColor)
-                        .padding(.top, 1)
                         .transition(.scale.combined(with: .opacity))
                 }
             }
 
-            // Description
-            if let desc = preset.presetDescription, !desc.isEmpty {
-                Text(desc)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            // Action buttons row
-            HStack(spacing: 5) {
-                Spacer()
-
-                SidebarIconButton(
-                    icon: "pencil",
-                    help: "Edit \u{201C}\(preset.name)\u{201D}",
-                    action: onEdit
-                )
-                SidebarIconButton(
-                    icon: "doc.on.doc",
-                    help: "Duplicate \u{201C}\(preset.name)\u{201D}",
-                    action: onDuplicate
-                )
-                SidebarIconButton(
-                    icon: "square.and.arrow.up",
-                    help: "Export \u{201C}\(preset.name)\u{201D}",
-                    action: onExport
-                )
-                SidebarIconButton(
-                    icon: "trash",
-                    color: .red,
-                    help: "Delete \u{201C}\(preset.name)\u{201D}",
-                    action: onDelete
-                )
+            // Line 2: minimal action buttons, left-aligned
+            HStack(spacing: 0) {
+                MinimalIconButton(icon: "pencil",             help: "Edit \u{201C}\(preset.name)\u{201D}",      action: onEdit)
+                MinimalIconButton(icon: "doc.on.doc",         help: "Duplicate \u{201C}\(preset.name)\u{201D}", action: onDuplicate)
+                MinimalIconButton(icon: "square.and.arrow.up",help: "Export \u{201C}\(preset.name)\u{201D}",    action: onExport)
+                MinimalIconButton(icon: "trash", color: .red, help: "Delete \u{201C}\(preset.name)\u{201D}",   action: onDelete)
             }
         }
-        // Inner padding: breathing room between content and highlight border
         .padding(.horizontal, 12)
-        .padding(.vertical, 11)
-        // Highlight wraps content directly — no inverted inset tricks
+        .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: 9)
+            RoundedRectangle(cornerRadius: 7)
                 .fill(
                     isSelected
                         ? Color.accentColor.opacity(0.13)
@@ -577,9 +602,16 @@ private struct PresetCardView: View {
                             : Color.clear
                 )
         )
-        // Outer padding: breathing room between highlight border and dividers/walls
+        .overlay(alignment: .top) {
+            if isDropTarget {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(height: 2)
+                    .padding(.horizontal, 4)
+            }
+        }
         .padding(.horizontal, 8)
-        .padding(.vertical, 10)
+        .padding(.vertical, 4)
         .contentShape(Rectangle())
         .onTapGesture { onTap() }
         .onHover { isHovered = $0 }
@@ -588,9 +620,35 @@ private struct PresetCardView: View {
     }
 }
 
-// MARK: - Shared Icon Button (sidebar actions + header "+")
+// MARK: - Minimal Icon Button (card actions)
 
-/// Accent-colored icon button with subtle rounded-rect background and hover lift.
+/// Icon-only button with no background — used inside compact preset cards.
+private struct MinimalIconButton: View {
+    let icon: String
+    var color: Color = .secondary
+    let help: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .regular))
+                .foregroundStyle(isHovered ? (color == .secondary ? Color.primary : color) : color.opacity(0.7))
+                .frame(width: 22, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Shared Icon Button (sidebar header buttons)
+
+/// Accent-colored icon button for the sidebar header — more prominent than MinimalIconButton
+/// (larger, accent-colored, medium weight) but without a filled box background.
 private struct SidebarIconButton: View {
     let icon: String
     var color: Color = .accentColor
@@ -602,14 +660,10 @@ private struct SidebarIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(isHovered ? 1.0 : 0.75))
                 .frame(width: 26, height: 24)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(color.opacity(isHovered ? 1.0 : 0.82))
-                )
-                .scaleEffect(isHovered ? 1.06 : 1.0)
+                .scaleEffect(isHovered ? 1.1 : 1.0)
                 .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isHovered)
         }
         .buttonStyle(.plain)

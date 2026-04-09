@@ -166,6 +166,18 @@ struct HiddenCharacterTextView: NSViewRepresentable {
             guard !isUpdating,
                   let textView = notification.object as? NSTextView else { return }
 
+            // Normalize line endings that may arrive via paste from external apps
+            // (\r\n, \r, Unicode line/paragraph separators → \n).
+            let raw = textView.string
+            let normalized = ClipboardService.normalizeLineEndings(raw)
+            if normalized != raw {
+                isUpdating = true
+                let selectedRanges = textView.selectedRanges
+                textView.string = normalized
+                textView.selectedRanges = selectedRanges
+                isUpdating = false
+            }
+
             // Sync text back to the binding
             parent.text = textView.string
 

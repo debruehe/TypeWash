@@ -151,6 +151,7 @@ Fast path: `guard text.contains("{{") else { return text }`
 | Sidebar blur not visible | SwiftUI `.ultraThinMaterial` = no real blur on macOS | `VisualEffectBlurView` wrapping `NSVisualEffectView` |
 | Dot grid invisible (attempt 1) | SwiftUI Canvas/Color rendered below AppKit NSView layer | Moved drawing to `DotGridTextView.drawBackground(in:)` |
 | Dot grid invisible (attempt 2) | `NSClipView` draws opaque even when `scrollView.drawsBackground = false` | `scrollView.contentView.backgroundColor = .clear` |
+| Pilcrows missing + regex not matching line breaks | Pasted text from Word/PDF/web uses `\r\n`/`\r`/`\u2028`/`\u2029` — layout manager only handled `\n` | `ClipboardService.normalizeLineEndings()` called in `getText()` and `Coordinator.textDidChange`; layout manager switch also covers `\r` etc. |
 
 ---
 

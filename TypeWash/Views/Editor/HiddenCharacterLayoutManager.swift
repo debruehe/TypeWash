@@ -30,7 +30,7 @@ final class HiddenCharacterLayoutManager: NSLayoutManager {
             let color: NSColor
 
             switch char {
-            case "\n":
+            case "\n", "\r", "\r\n", "\u{2028}", "\u{2029}":
                 symbol = TypographicPatterns.pilcrow
                 color = mutedColor
             case " ":
@@ -67,7 +67,7 @@ final class HiddenCharacterLayoutManager: NSLayoutManager {
     ) {
         let glyphIndex = glyphIndexForCharacter(at: charIndex)
 
-        guard let textContainer = textContainers.first else { return }
+        guard textContainers.first != nil else { return }
 
         // Get the line fragment rect for this glyph
         var effectiveRange = NSRange(location: 0, length: 0)
