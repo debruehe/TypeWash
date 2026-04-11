@@ -1,0 +1,18 @@
+{
+  "description" : "Entfernt Umbrüche jeder Zeile, fasst doppelte Umbrüche in einen einzelnen um.",
+  "name" : "Umbruchaufräumer",
+  "operations" : [
+    {
+      "find" : "(?<!\n)\n(?!\n)",
+      "isCaseSensitive" : true,
+      "isRegex" : true,
+      "replace" : " "
+    },
+    {
+      "find" : "([a-zA-ZäöüÄÖÜß])-\\s+([a-zA-ZäöüÄÖÜß])",
+      "isCaseSensitive" : true,
+      "isRegex" : true,
+      "replace" : "$1$2"
+    }
+  ]
+}

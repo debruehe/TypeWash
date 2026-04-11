@@ -1,23 +1,71 @@
 {
   "fill" : {
-    "automatic-gradient" : "display-p3:0.00000,0.00000,0.00000,1.00000"
+    "automatic-gradient" : "display-p3:0.07397,0.21056,0.15953,1.00000"
   },
   "groups" : [
     {
       "layers" : [
         {
           "fill" : {
-            "solid" : "srgb:1.00000,0.71765,0.00000,1.00000"
+            "linear-gradient" : [
+              "display-p3:0.82287,0.85632,0.89915,1.00000",
+              "display-p3:0.93308,0.96815,1.00000,1.00000"
+            ],
+            "orientation" : {
+              "start" : {
+                "x" : 0.5,
+                "y" : 1
+              },
+              "stop" : {
+                "x" : 0.5,
+                "y" : 0.3
+              }
+            }
           },
-          "image-name" : "wash.svg",
-          "name" : "wash",
+          "glass" : true,
+          "image-name" : "fwfwwef 2.svg",
+          "name" : "fwfwwef 2",
           "position" : {
             "scale" : 1,
             "translation-in-points" : [
-              0,
-              -14
+              40,
+              3
             ]
           }
+        }
+      ],
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.5
+      },
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.5
+      }
+    },
+    {
+      "layers" : [
+        {
+          "blend-mode" : "screen",
+          "fill" : {
+            "linear-gradient" : [
+              "display-p3:0.43456,0.43456,0.43456,1.00000",
+              "display-p3:1.00000,1.00000,1.00000,1.00000"
+            ],
+            "orientation" : {
+              "start" : {
+                "x" : 0.9028244018554688,
+                "y" : 0.974884033203125
+              },
+              "stop" : {
+                "x" : 0.0872344970703125,
+                "y" : 0.0352783203125
+              }
+            }
+          },
+          "image-name" : "grid.svg",
+          "name" : "grid",
+          "opacity" : 0.3
         }
       ],
       "shadow" : {
