@@ -7,6 +7,8 @@ struct HiddenCharacterTextView: NSViewRepresentable {
 
     @Binding var text: String
     var isEditable: Bool = true
+    /// Called when the user edits text directly (typing / paste) — not when the parent pushes a new value.
+    var onTextChange: (() -> Void)?
 
     // MARK: - NSViewRepresentable
 
@@ -178,8 +180,9 @@ struct HiddenCharacterTextView: NSViewRepresentable {
                 isUpdating = false
             }
 
-            // Sync text back to the binding
+            // Sync text back to the binding, then notify the parent that the user changed the text.
             parent.text = textView.string
+            parent.onTextChange?()
 
             // Re-apply paragraph style to keep it consistent after edits.
             // Wrapped in beginEditing/endEditing to batch and prevent layout recursion.

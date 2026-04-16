@@ -16,6 +16,12 @@ struct EditorView: View {
     @State private var selectedPreset: Preset?
     @State private var editingPreset: Preset?
 
+    // The text after all preset operations — hyphenation is layered on top in finalizeOutput.
+    // Resets to inputText on each new input; advances through the chain on each preset activation.
+    @State private var workingText = ""
+    // Names of presets that have been chained since the last new input, in order.
+    @State private var appliedPresetChain: [String] = []
+
     // Stats from the last transform
     @State private var lastOperationsApplied = 0
     @State private var lastTotalChanges = 0
@@ -85,22 +91,25 @@ struct EditorView: View {
         .onAppear { startClipboardPolling() }
         .onDisappear { stopClipboardPolling() }
         .onChange(of: selectedPreset) {
-            if !inputText.isEmpty { applyAll() }
+            // New preset activated → chain it on top of whatever has been processed so far.
+            if let preset = selectedPreset, !inputText.isEmpty {
+                applyNextPreset(preset)
+            }
         }
         .onChange(of: hyphenationEnabled) {
-            if !inputText.isEmpty { applyAll() }
+            if !inputText.isEmpty { finalizeOutput() }
         }
         .onChange(of: hyphenationLanguage) {
-            if hyphenationEnabled && !inputText.isEmpty { applyAll() }
+            if hyphenationEnabled && !inputText.isEmpty { finalizeOutput() }
         }
         .onChange(of: hyphenationMinWordLength) {
-            if hyphenationEnabled && !inputText.isEmpty { applyAll() }
+            if hyphenationEnabled && !inputText.isEmpty { finalizeOutput() }
         }
         .onChange(of: hyphenationMinCharsBefore) {
-            if hyphenationEnabled && !inputText.isEmpty { applyAll() }
+            if hyphenationEnabled && !inputText.isEmpty { finalizeOutput() }
         }
         .onChange(of: hyphenationMinCharsAfter) {
-            if hyphenationEnabled && !inputText.isEmpty { applyAll() }
+            if hyphenationEnabled && !inputText.isEmpty { finalizeOutput() }
         }
         .onChange(of: clipboardWatchEnabled) {
             if clipboardWatchEnabled {
@@ -226,7 +235,8 @@ struct EditorView: View {
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
 
-            HiddenCharacterTextView(text: $inputText, isEditable: true)
+            HiddenCharacterTextView(text: $inputText, isEditable: true,
+                                    onTextChange: { processNewInput(logHistory: false) })
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
                         .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5)
@@ -416,9 +426,7 @@ struct EditorView: View {
 
             if let text = ClipboardService.getText() {
                 inputText = text
-                if selectedPreset != nil || hyphenationEnabled {
-                    applyAll()
-                }
+                processNewInput(logHistory: true)
             }
         }
         RunLoop.main.add(t, forMode: .default)
@@ -432,52 +440,87 @@ struct EditorView: View {
 
     // MARK: - Actions
 
-    /// Runs the full transformation pipeline: preset operations (if selected)
-    /// followed by hyphenation (if enabled). Either or both may be active.
-    private func applyAll() {
+    /// New input arrived (clipboard or user typed/pasted into the input field).
+    /// Resets the preset chain and re-applies the active preset from scratch.
+    /// Pass logHistory: false for live typing updates to avoid flooding the history.
+    private func processNewInput(logHistory: Bool = true) {
+        // Always reset chain so next applyNextPreset starts from fresh input.
+        workingText = inputText
+        appliedPresetChain = []
+        lastOperationsApplied = 0
+        lastTotalChanges = 0
+
         guard !inputText.isEmpty, selectedPreset != nil || hyphenationEnabled else { return }
 
-        var text          = inputText
-        var opsApplied    = 0
-        var totalChanges  = 0
-        var hyphensAdded  = 0
-
-        // Step 1 — apply selected preset
         if let preset = selectedPreset {
-            let result   = PresetEngine.apply(preset: preset, to: text)
-            text         = result.outputText
-            opsApplied   = result.operationsApplied
-            totalChanges = result.totalChanges
+            let result = PresetEngine.apply(preset: preset, to: workingText)
+            workingText = result.outputText
+            appliedPresetChain = [preset.name]
+            lastOperationsApplied = result.operationsApplied
+            lastTotalChanges = result.totalChanges
         }
 
-        // Step 2 — apply hyphenation
+        finalizeOutput(logHistory: logHistory)
+    }
+
+    /// User activated a new preset — chain it on top of whatever workingText holds now.
+    private func applyNextPreset(_ preset: Preset) {
+        guard !inputText.isEmpty else { return }
+        // If workingText hasn't been initialised yet, start from raw input.
+        if workingText.isEmpty { workingText = inputText }
+
+        let result = PresetEngine.apply(preset: preset, to: workingText)
+        workingText = result.outputText
+        appliedPresetChain.append(preset.name)
+        lastOperationsApplied = result.operationsApplied
+        lastTotalChanges = result.totalChanges
+
+        finalizeOutput(logHistory: true)
+    }
+
+    /// Applies hyphenation (if enabled) to workingText, writes outputText,
+    /// optionally logs a history entry, and triggers auto-copy.
+    private func finalizeOutput(logHistory: Bool = true) {
+        // Safety: if workingText was never set, fall back to raw input.
+        if workingText.isEmpty && !inputText.isEmpty { workingText = inputText }
+
+        var text         = workingText
+        var hyphensAdded = 0
+
         if hyphenationEnabled {
             let hyphenResult = HyphenationEngine.apply(to: text, settings: currentHyphenationSettings)
-            text        = hyphenResult.output
+            text         = hyphenResult.output
             hyphensAdded = hyphenResult.count
         }
 
-        outputText              = text
-        lastOperationsApplied   = opsApplied
-        lastTotalChanges        = totalChanges
-        lastHyphenationsAdded   = hyphensAdded
+        outputText            = text
+        lastHyphenationsAdded = hyphensAdded
 
-        let presetName = selectedPreset?.name
-            ?? (hyphenationEnabled ? "Hyphenation" : "")
-        let entry = HistoryEntry(
-            inputText:  inputText,
-            outputText: text,
-            presetName: presetName,
-            presetId:   selectedPreset?.id
-        )
-        modelContext.insert(entry)
+        if logHistory && !text.isEmpty {
+            let chainDescription: String
+            if !appliedPresetChain.isEmpty {
+                chainDescription = appliedPresetChain.joined(separator: " → ")
+            } else if hyphenationEnabled {
+                chainDescription = "Hyphenation"
+            } else {
+                // Nothing meaningful was applied — skip the log.
+                if autoMode { copyResult() }
+                return
+            }
+
+            let entry = HistoryEntry(
+                inputText:  inputText,
+                outputText: text,
+                presetName: chainDescription,
+                presetId:   appliedPresetChain.count == 1 ? selectedPreset?.id : nil
+            )
+            modelContext.insert(entry)
+        }
 
         // Auto-copy: write output back to clipboard immediately.
         // copyResult() updates clipboardChangeCount right after writing,
         // so the next poll sees an unchanged count and won't re-insert. No loop.
-        if autoMode {
-            copyResult()
-        }
+        if autoMode { copyResult() }
     }
 
     private var currentHyphenationSettings: HyphenationEngine.Settings {
