@@ -257,7 +257,7 @@ struct EditorView: View {
 
                 Spacer()
 
-                CopyButton(isFlashing: outputText.isEmpty ? false : false, action: copyResult)
+                CopyButton(action: copyResult)
                     .disabled(outputText.isEmpty)
             }
 
@@ -718,7 +718,6 @@ private struct SidebarIconButton: View {
 // MARK: - Copy Button
 
 private struct CopyButton: View {
-    let isFlashing: Bool
     let action: () -> Void
 
     @State private var isCopied = false
@@ -727,21 +726,23 @@ private struct CopyButton: View {
     var body: some View {
         Button {
             action()
-            withAnimation(.easeInOut(duration: 0.18)) { isCopied = true }
+            isCopied = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                withAnimation(.easeInOut(duration: 0.18)) { isCopied = false }
+                isCopied = false
             }
         } label: {
-            Label(
-                isCopied ? "Copied" : "Copy",
-                systemImage: isCopied ? "checkmark" : "doc.on.doc"
-            )
+            ZStack {
+                Label("Copied", systemImage: "checkmark")
+                    .opacity(isCopied ? 1 : 0)
+                Label("Copy", systemImage: "doc.on.doc")
+                    .opacity(isCopied ? 0 : 1)
+            }
+            .animation(.easeInOut(duration: 0.15), value: isCopied)
             .font(.subheadline)
             .foregroundStyle(isCopied ? Color.green : (isHovered ? Color.primary : Color.secondary))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .scaleEffect(isHovered ? 1.04 : 1.0)
-        .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isHovered)
         .onHover { isHovered = $0 }
     }
 }
